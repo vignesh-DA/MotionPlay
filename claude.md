@@ -426,3 +426,69 @@ The system is:
 **Total Effort**: ~100 hours (design, implementation, testing, documentation)
 **Code Quality**: Production ready for capstone submission
 **Reusability**: Modules applicable to other CV projects
+
+---
+
+# IMPLEMENTATION UPDATE: MediaPipe Migration (March 13, 2026)
+
+## Problem Identified
+HSV-based hand detection in **main.py** proved fragile:
+- Required extensive per-user calibration
+- Failed in variable lighting conditions
+- Morphological operations fragmented hand masks into sub-threshold pieces
+- Even at 100% detection rate (achieved via threshold tuning to 20px), system was unreliable
+
+## Solution: Switch to MediaPipe
+Implemented **main_mediapipe.py** using MediaPipe's pre-trained hand detection model.
+
+### Files Modified/Created:
+
+**1. requirements.txt** (MODIFIED)
+- **Changed**: `mediapipe>=0.8.1` → `mediapipe==0.10.5`
+- **Reason**: MediaPipe 0.10.32 removed `mp.solutions` API, requiring older version compatible with `Hands` API
+- **Version**: 0.10.5 is oldest available and supports solutions.hands
+
+**2. src/main_mediapipe.py** (CREATED)
+- **Framework**: MediaPipe solutions.hands API (21-point hand detection)
+- **Architecture**: Single `HandGestureRecognizer` class with all functionality
+- **Gesture Classification**:
+  - OPEN_PALM: 5 fingers raised (all fingertips above PIPs)
+  - CLOSED_FIST: 0 fingers raised (all fingertips below PIPs) ← **Needs Fix**
+  - INDEX_RIGHT: 1 finger raised, tip in right half of frame
+  - INDEX_LEFT: 1 finger raised, tip in left half of frame
+  - UNDEFINED: Other states
+
+**Key Methods**:
+- `_ensure_model()`: Downloads hand_landmarker.task if needed (Tasks API fallback)
+- `detect_hand(frame)`: Uses MediaPipe Hands to get 21 landmarks
+- `count_fingers(landmarks_pos)`: Counts raised fingers using vertical Y-position comparison
+- `classify_gesture(landmarks_pos, frame_shape)`: Maps finger count to gesture type
+- `smooth_gesture(current_gesture)`: Temporal filtering (5-frame history, 3-frame stability)
+- `execute_command(gesture)`: Maps gesture → keyboard key with 0.3s debounce cooldown
+- `draw_landmarks(frame, landmarks_pos)`: Visualizes 21 points + skeleton
+- `draw_gesture_display(frame, gesture, confidence)`: Shows gesture name + keyboard command on screen
+- `run()`: Main loop with camera, detection, classification, display
+
+### Known Issues to Fix:
+
+**Issue 1: Closed Fist Detection Returns UNDEFINED**
+- **Symptom**: When user closes hand (fist), gesture is classified as UNDEFINED instead of CLOSED_FIST
+- **Root Cause**: In `count_fingers()`, the logic for determining "raised" vs "closed" fingers may have incorrect PIP/tip index mapping
+- **Affected Code**: Lines ~165-175 in main_mediapipe.py
+- **Fix Required**: 
+  - Verify MediaPipe landmark indices: [0=wrist, 1-4=thumb, 5-8=index, 9-12=middle, 13-16=ring, 17-20=pinky]
+  - Check PIP (knuckle) vs Tip (fingertip) comparison logic
+  - Ensure Y-coordinate comparison is correct (tip.y < pip.y means raised)
+
+### Installation Status:
+✅ MediaPipe 0.10.5 installed successfully (March 13, 2026)
+✅ Code syntax validated
+✅ Import paths fixed (using solutions.hands, not tasks.vision)
+❌ Gesture classification incomplete (closed fist detection not working)
+
+### Next Steps:
+1. **DEBUG**: Run main_mediapipe.py and test each gesture individually
+2. **FIX**: Correct the finger counting logic for closed fist detection
+3. **VALIDATE**: Test all 4 gestures with visual feedback on screen
+4. **DEPLOY**: Run against Temple Run/Subway Surfers for game integration testing
+5. **UPDATE**: Document final working version and update claude.md
