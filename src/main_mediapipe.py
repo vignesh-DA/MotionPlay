@@ -5,11 +5,17 @@ REAL-TIME HAND GESTURE RECOGNITION - MEDIAPIPE VERSION
 Uses MediaPipe Hands (solutions API) for 99%+ accurate hand detection + 21 keypoints.
 Classifies 4 gestures for Temple Run / Subway Surfers game control.
 
-GESTURE MAPPING:
-  1. INDEX_RIGHT    → RIGHT arrow key (point index right)
-  2. INDEX_LEFT     → LEFT arrow key (point index left)
-  3. OPEN_PALM      → UP arrow key (jump - all 5 fingers open)
-  4. CLOSED_FIST    → DOWN arrow key (slide - all fingers curled)
+GESTURE MAPPING (UPDATED - Position-Based Left/Right):
+  1. OPEN_PALM      → UP arrow key (jump - 4-5 fingers open)
+  2. CLOSED_FIST    → DOWN arrow key (slide - 0-1 fingers closed)
+  3. Hand on LEFT   → LEFT arrow key (move left - hand on left side of frame)
+  4. Hand on RIGHT  → RIGHT arrow key (move right - hand on right side of frame)
+
+KEY IMPROVEMENTS:
+  ✓ LEFT/RIGHT now use HAND POSITION instead of single-finger pointing
+  ✓ Much more reliable - works even with closed fist
+  ✓ Closed fist now correctly detected (was being mis-classified before)
+  ✓ No more need to point with index finger - just move your hand left/right!
 
 IMPROVEMENTS OVER HSV VERSION:
   ✓ 99%+ accurate hand detection (vs 100% at best with HSV)
@@ -19,7 +25,7 @@ IMPROVEMENTS OVER HSV VERSION:
   ✓ Faster & more reliable gesture classification
   ✓ Real-time 30+ FPS on CPU
 
-Author:     Hand Gesture Controller v2.0
+Author:     Hand Gesture Controller v2.1
 Date:       2026
 Framework:  MediaPipe (solutions.hands API)
 """
@@ -44,21 +50,32 @@ except ImportError:
     USE_TASKS_API = False
     print("Using MediaPipe solutions.hands API")
 
-# Setup logging
+# Setup logging with UTF-8 encoding for Windows compatibility
 log_dir = "logs"
 if not os.path.exists(log_dir):
     os.makedirs(log_dir)
 
 log_filename = f"{log_dir}/gesture_recognition_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - [%(levelname)s] - %(message)s',
-    handlers=[
-        logging.FileHandler(log_filename),
-        logging.StreamHandler()  # Also print to console
-    ]
-)
+
+# Create handlers with explicit UTF-8 encoding
+file_handler = logging.FileHandler(log_filename, encoding='utf-8')
+console_handler = logging.StreamHandler()
+console_handler.setStream(__import__('sys').stdout)
+
+# Set encoding for console handler (Windows compatibility)
+if hasattr(console_handler, 'setEncoding'):
+    console_handler.setEncoding('utf-8')
+
+# Create formatter
+formatter = logging.Formatter('%(asctime)s - [%(levelname)s] - %(message)s')
+file_handler.setFormatter(formatter)
+console_handler.setFormatter(formatter)
+
+# Setup logger
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
 
 
 class GestureType(Enum):
@@ -111,27 +128,27 @@ class HandGestureRecognizer:
         self.mp_hands = mp.solutions.hands
         self.mp_drawing = mp.solutions.drawing_utils
         
-        # Initialize hand detector
+        # Initialize hand detector (lowered thresholds for game play robustness)
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
             max_num_hands=1,
-            min_detection_confidence=0.7,
-            min_tracking_confidence=0.5
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.3
         )
         
         logger.info("✓ MediaPipe Hand Detector initialized")
-        logger.info(f"  - Detection confidence: 0.7")
-        logger.info(f"  - Tracking confidence: 0.5")
+        logger.info(f"  - Detection confidence: 0.5 (lowered for gameplay)")
+        logger.info(f"  - Tracking confidence: 0.3 (lowered for gameplay)")
         logger.info(f"  - Max hands: 1")
         
         # Gesture smoothing (temporal filtering)
         self.gesture_history = deque(maxlen=5)
         self.last_gesture = GestureType.UNDEFINED
         self.last_command_time = 0
-        self.command_cooldown = 0.3  # seconds
+        self.command_cooldown = 0.15  # seconds (faster response for gameplay)
         
-        logger.info(f"  - Command cooldown: {self.command_cooldown}s")
-        logger.info(f"  - Gesture smoothing: 5-frame history with 3-frame stability")
+        logger.info(f"  - Command cooldown: {self.command_cooldown}s (reduced for gameplay)")
+        logger.info(f"  - Gesture smoothing: Instant (1-frame) for faster response")
         
         # Statistics
         self.frame_count = 0
@@ -198,90 +215,109 @@ class HandGestureRecognizer:
         Uses comparison: DIP.y < MCP.y means finger is extended (raised)
         
         Returns:
-            int: Number of raised fingers (0-5)
+            tuple: (raised_count, detailed_measurements) 
+                   detailed_measurements = list of dicts with finger measurements
         """
-        # For each finger, compare DIP position to MCP position
+        # For each finger, compare DIP position to MPC position
         # If DIP is higher (smaller Y), finger is raised
         # If DIP is lower (larger Y), finger is closed
         
         fingers = [
-            (4, 3),      # Thumb: tip=4, IP=3
-            (8, 7),      # Index: tip=8, DIP=7  
-            (12, 11),    # Middle: tip=12, DIP=11
-            (16, 15),    # Ring: tip=16, DIP=15
-            (20, 19),    # Pinky: tip=20, DIP=19
+            (4, 3, "Thumb"),      # Thumb: tip=4, IP=3
+            (8, 7, "Index"),      # Index: tip=8, DIP=7  
+            (12, 11, "Middle"),   # Middle: tip=12, DIP=11
+            (16, 15, "Ring"),     # Ring: tip=16, DIP=15
+            (20, 19, "Pinky"),    # Pinky: tip=20, DIP=19
         ]
         
         raised_count = 0
-        for tip_idx, dip_idx in fingers:
-            # Finger is raised if tip is above DIP (lower Y coordinate)
-            # Add margin of 5 pixels to avoid false positives
-            if landmarks_pos[tip_idx][1] < landmarks_pos[dip_idx][1] - 5:
-                raised_count += 1
+        measurements = []
+        margin = 3  # pixels threshold
         
-        return raised_count
+        for tip_idx, dip_idx, finger_name in fingers:
+            tip_y = landmarks_pos[tip_idx][1]
+            dip_y = landmarks_pos[dip_idx][1]
+            distance = dip_y - tip_y  # positive if DIP is below tip
+            is_raised = tip_y < dip_y - margin
+            
+            if is_raised:
+                raised_count += 1
+            
+            measurements.append({
+                'finger': finger_name,
+                'tip_y': int(tip_y),
+                'dip_y': int(dip_y),
+                'distance': int(distance),
+                'margin': margin,
+                'is_raised': is_raised
+            })
+        
+        return raised_count, measurements
     
     def classify_gesture(self, landmarks_pos, frame_shape):
         """
         Classify hand gesture from landmarks.
         
-        Gesture Logic:
-          - 5 fingers raised → OPEN_PALM (jump)
-          - 0 fingers raised → CLOSED_FIST (slide)
-          - 1 finger raised (index only) → INDEX_RIGHT or INDEX_LEFT
-          - Otherwise → UNDEFINED
+        UPDATED GESTURE LOGIC (v2.2 - Wrist-Based Left/Right):
+          - ≥4 fingers raised → OPEN_PALM (jump/up)
+          - ≤1 finger raised → CLOSED_FIST (slide/down) 
+          - Wrist on LEFT side of frame → INDEX_LEFT (move left)
+          - Wrist on RIGHT side of frame → INDEX_RIGHT (move right)
+          
+        KEY IMPROVEMENT: Uses WRIST position (landmark 0) for left/right detection.
+        This is much more reliable than hand center or individual finger positions!
+        
+        Wrist position reflects where your arm/hand is in the frame:
+        - Wrist x < frame_width/2 = hand on left side = move left
+        - Wrist x > frame_width/2 = hand on right side = move right
         
         Args:
             landmarks_pos: (21, 2) array of landmark positions
             frame_shape: (height, width) of frame
             
         Returns:
-            GestureType: Classified gesture
+            tuple: (GestureType, finger_count, measurements)
         """
         h, w = frame_shape[:2]
-        finger_count = self.count_fingers(landmarks_pos)
+        finger_count, measurements = self.count_fingers(landmarks_pos)
         
-        # OPEN_PALM: All 5 fingers raised
-        if finger_count == 5:
-            return GestureType.OPEN_PALM
+        # OPEN_PALM: 4-5 fingers raised (tolerance for imperfect hand positions)
+        if finger_count >= 4:
+            return GestureType.OPEN_PALM, finger_count, measurements
         
-        # CLOSED_FIST: No fingers raised
-        if finger_count == 0:
-            return GestureType.CLOSED_FIST
+        # CLOSED_FIST: 0-1 fingers raised (fist completely closed or only thumb up)
+        if finger_count <= 1:
+            return GestureType.CLOSED_FIST, finger_count, measurements
         
-        # INDEX_RIGHT or INDEX_LEFT: Only 1 finger raised
-        if finger_count == 1:
-            # Get index fingertip position
-            index_tip = landmarks_pos[8]
-            
-            # Determine if pointing right or left
-            if index_tip[0] > w / 2:
-                return GestureType.INDEX_RIGHT
-            else:
-                return GestureType.INDEX_LEFT
+        # LEFT/RIGHT: Use WRIST position (landmark 0) for detection
+        # Wrist is at the base of the hand - most reliable indicator of hand location
+        wrist_x = landmarks_pos[0][0]  # Landmark 0 = wrist
         
-        # All other cases
-        return GestureType.UNDEFINED
+        if wrist_x < w / 2:
+            return GestureType.INDEX_LEFT, finger_count, measurements
+        else:
+            return GestureType.INDEX_RIGHT, finger_count, measurements
     
     def smooth_gesture(self, current_gesture):
         """
-        Smooth gesture classification using temporal filtering (majority voting).
+        Gesture smoothing for gameplay (instant response with stability).
+        
+        For gameplay: Instantly confirms valid gestures (0 frame latency)
+        For stability: Holds last valid gesture when hand is lost (UNDEFINED)
         
         Args:
             current_gesture: GestureType from current frame
             
         Returns:
-            GestureType: Smoothed gesture (requires 3 consecutive same gestures)
+            GestureType: Smooth gesture (instant response, prevents jitter)
         """
         self.gesture_history.append(current_gesture)
         
-        # Need 3+ consecutive same gestures to confirm
-        if len(self.gesture_history) >= 3:
-            # Check if last 3 are the same
-            if all(g == self.gesture_history[-1] for g in list(self.gesture_history)[-3:]):
-                return self.gesture_history[-1]
+        # Instant confirmation for valid gestures (0 frame latency for gameplay)
+        if current_gesture != GestureType.UNDEFINED:
+            return current_gesture
         
-        # Not enough consensus, return previous stable gesture
+        # Hand lost: hold previous gesture briefly to prevent jitter
         return self.last_gesture
     
     def execute_command(self, gesture):
@@ -424,7 +460,10 @@ class HandGestureRecognizer:
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         
         # Draw finger count
-        finger_count = self.count_fingers(self.last_landmarks) if hasattr(self, 'last_landmarks') else 0
+        if hasattr(self, 'last_landmarks') and self.last_landmarks is not None:
+            finger_count, _ = self.count_fingers(self.last_landmarks)
+        else:
+            finger_count = 0
         finger_text = f"Fingers: {finger_count}"
         cv2.putText(frame, finger_text, (30, h - 30),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
@@ -436,11 +475,11 @@ class HandGestureRecognizer:
         logger.info("MEDIAPIPE HAND GESTURE RECOGNITION - GAME CONTROLLER")
         logger.info("="*70)
         logger.info("")
-        logger.info("GESTURE MAPPING:")
-        logger.info("  ✓ OPEN_PALM     → UP arrow key (Jump)")
-        logger.info("  ✓ CLOSED_FIST   → DOWN arrow key (Slide)")
-        logger.info("  ✓ INDEX_RIGHT   → RIGHT arrow key (Move right)")
-        logger.info("  ✓ INDEX_LEFT    → LEFT arrow key (Move left)")
+        logger.info("GESTURE MAPPING (UPDATED - Position-Based Left/Right):")
+        logger.info("  ✓ OPEN_PALM     → UP arrow key (Jump) - open hand with 4+ fingers")
+        logger.info("  ✓ CLOSED_FIST   → DOWN arrow key (Slide) - closed fist or thumb only")
+        logger.info("  ✓ Hand on LEFT  → LEFT arrow key (Move left) - based on hand position")
+        logger.info("  ✓ Hand on RIGHT → RIGHT arrow key (Move right) - based on hand position")
         logger.info("")
         logger.info("CONTROLS (during execution):")
         logger.info("  'q' - Quit application")
@@ -473,9 +512,8 @@ class HandGestureRecognizer:
                     landmarks_pos = landmarks
                     self.last_landmarks = landmarks_pos
                     
-                    # Classify gesture
-                    current_gesture = self.classify_gesture(landmarks_pos, frame.shape)
-                    finger_count = self.count_fingers(landmarks_pos)
+                    # Classify gesture (now returns gesture, finger_count, measurements)
+                    current_gesture, finger_count, measurements = self.classify_gesture(landmarks_pos, frame.shape)
                     
                     # Smooth gesture
                     smoothed_gesture = self.smooth_gesture(current_gesture)
@@ -484,9 +522,15 @@ class HandGestureRecognizer:
                     # Track gesture counts
                     self.gesture_counts[smoothed_gesture.value] += 1
                     
-                    # Log every 30 frames
+                    # Log every 30 frames with detailed measurements
                     if self.frame_count % 30 == 0:
+                        # Format detailed measurements for logging
+                        measurements_str = " | ".join([
+                            f"{m['finger']}: tip={m['tip_y']} dip={m['dip_y']} dist={m['distance']} {'✓RAISED' if m['is_raised'] else '✗closed'}"
+                            for m in measurements
+                        ])
                         logger.info(f"Frame {self.frame_count}: [OK] DETECTED - Gesture: {smoothed_gesture.value} (fingers: {finger_count})")
+                        logger.info(f"  └─ Y-Coordinate Distances (margin={measurements[0]['margin']}px): {measurements_str}")
                     
                     # Execute command
                     command_executed = self.execute_command(smoothed_gesture)

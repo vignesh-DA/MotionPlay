@@ -1,5 +1,6 @@
 # HAND NOT DETECTING - QUICK SOLUTION GUIDE
-
+this movements are complicated for hands right 
+what do you think like that 
 ## 🚨 Your Issue
 **"It isn't detecting my hand"**
 
