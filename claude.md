@@ -492,3 +492,224 @@ Implemented **main_mediapipe.py** using MediaPipe's pre-trained hand detection m
 3. **VALIDATE**: Test all 4 gestures with visual feedback on screen
 4. **DEPLOY**: Run against Temple Run/Subway Surfers for game integration testing
 5. **UPDATE**: Document final working version and update claude.md
+
+---
+
+# IMPLEMENTATION UPDATE: Comprehensive Logging System (March 13, 2026)
+
+## Problem Identified
+- No way to track gesture events during execution
+- Difficult to debug false negatives (hand not detected)
+- No record of command execution for analysis
+- Statistics only visible at program end
+
+## Solution: Add Production-Quality Logging
+
+### Files Modified:
+
+**1. src/main_mediapipe.py** (ENHANCED WITH LOGGING)
+
+#### New Imports Added:
+```python
+import logging
+from datetime import datetime
+```
+
+#### Logging Configuration:
+```python
+log_dir = "logs"
+log_filename = f"{log_dir}/gesture_recognition_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - [%(levelname)s] - %(message)s',
+    handlers=[
+        logging.FileHandler(log_filename),
+        logging.StreamHandler()  # Also print to console
+    ]
+)
+logger = logging.getLogger(__name__)
+```
+
+#### Logging Points Added:
+
+1. **Initialization Events**:
+   - System startup with all configuration parameters
+   - Camera initialization (resolution, FPS)
+   - MediaPipe Hands setup (confidence thresholds)
+   - Log file location
+
+2. **Hand Detection Events** (every 30 frames):
+   - Frame number + detection status
+   - Gesture classification + finger count
+   ```
+   Frame 30: [OK] DETECTED - Gesture: OPEN_PALM (fingers: 5)
+   ```
+
+3. **No Hand Detection** (every 60 frames):
+   - Frame number when hand not detected
+   ```
+   Frame 60: [FAIL] NOT DETECTED
+   ```
+
+4. **Command Execution Events** (real-time):
+   - Every keyboard command pressed
+   - Gesture → Key mapping + action name
+   ```
+   Frame 45: [COMMAND] OPEN_PALM → UP key (jump)
+   ```
+
+5. **User Interaction Events**:
+   - When 'q' key pressed to quit
+   - When 's' key pressed for statistics
+   - When Ctrl+C interrupts program
+
+6. **Statistics on Demand** (when 's' pressed):
+   - Frame processing metrics
+   - Gesture classification distribution
+   - Command execution breakdown
+
+7. **Shutdown Events**:
+   - Program termination
+   - Resource cleanup confirmation
+   - Log file location
+
+### Log File Format
+
+**Location**: `logs/gesture_recognition_YYYYMMDD_HHMMSS.log`
+
+**Example Log Session**:
+```
+14:30:22 - [INFO] - ======================================================================
+14:30:22 - [INFO] - HAND GESTURE RECOGNITION - INITIALIZATION
+14:30:22 - [INFO] - ======================================================================
+14:30:22 - [INFO] - ✓ MediaPipe Hand Detector initialized
+14:30:22 - [INFO] -   - Detection confidence: 0.7
+14:30:22 - [INFO] -   - Tracking confidence: 0.5
+14:30:22 - [INFO] - ✓ Video capture initialized
+14:30:22 - [INFO] -   - Resolution: 1280x720
+14:30:22 - [INFO] -   - Target FPS: 30
+
+14:30:25 - [INFO] - MEDIAPIPE HAND GESTURE RECOGNITION - GAME CONTROLLER
+14:30:25 - [INFO] - ======================================================================
+14:30:25 - [INFO] - 
+14:30:25 - [INFO] - GESTURE MAPPING:
+14:30:25 - [INFO] -   ✓ OPEN_PALM     → UP arrow key (Jump)
+14:30:25 - [INFO] -   ✓ CLOSED_FIST   → DOWN arrow key (Slide)
+14:30:25 - [INFO] -   ✓ INDEX_RIGHT   → RIGHT arrow key (Move right)
+14:30:25 - [INFO] -   ✓ INDEX_LEFT    → LEFT arrow key (Move left)
+
+14:30:30 - [INFO] - Frame 30: [OK] DETECTED - Gesture: OPEN_PALM (fingers: 5)
+14:30:31 - [INFO] - Frame 30: [COMMAND] OPEN_PALM → UP key (jump)
+14:30:32 - [INFO] - Frame 60: [FAIL] NOT DETECTED
+14:30:35 - [INFO] - Frame 90: [OK] DETECTED - Gesture: CLOSED_FIST (fingers: 0)
+14:30:35 - [INFO] - Frame 90: [COMMAND] CLOSED_FIST → DOWN key (slide)
+
+=== User presses 's' for statistics ===
+
+14:30:40 - [INFO] - 
+14:30:40 - [INFO] - ======================================================================
+14:30:40 - [INFO] - SYSTEM STATISTICS
+14:30:40 - [INFO] - ======================================================================
+14:30:40 - [INFO] - 
+14:30:40 - [INFO] - Frame Processing:
+14:30:40 - [INFO] -   Total frames: 450
+14:30:40 - [INFO] -   Hands detected: 445
+14:30:40 - [INFO] -   Detection rate: 98.9%
+14:30:40 - [INFO] - 
+14:30:40 - [INFO] - Gesture Classification:
+14:30:40 - [INFO] -  OPEN_PALM            :  110 ( 24.7%)
+14:30:40 - [INFO] -  CLOSED_FIST          :  105 ( 23.6%)
+14:30:40 - [INFO] -  INDEX_RIGHT          :  115 ( 25.8%)
+14:30:40 - [INFO] -  INDEX_LEFT           :  115 ( 25.8%)
+14:30:40 - [INFO] - 
+14:30:40 - [INFO] - Command Execution (Keyboard Actions):
+14:30:40 - [INFO] -   move_right      :   28 ( 25.5%)
+14:30:40 - [INFO] -   move_left       :   26 ( 23.6%)
+14:30:40 - [INFO] -   jump            :   30 ( 27.3%)
+14:30:40 - [INFO] -   slide           :   26 ( 23.6%)
+
+=== User presses 'q' to quit ===
+
+14:30:45 - [INFO] - User requested quit (pressed 'q')
+14:30:45 - [INFO] - 
+14:30:45 - [INFO] - ======================================================================
+14:30:45 - [INFO] - SHUTDOWN
+14:30:45 - [INFO] - ======================================================================
+14:30:45 - [INFO] - Closing resources...
+14:30:45 - [INFO] - ✓ Video capture released
+14:30:45 - [INFO] - ✓ OpenCV windows closed
+14:30:45 - [INFO] - ✓ MediaPipe detector closed
+14:30:45 - [INFO] - 
+14:30:45 - [INFO] - Program terminated successfully.
+14:30:45 - [INFO] - Log file saved to: logs/gesture_recognition_20260313_143000.log
+```
+
+### Benefits of Logging System
+
+✅ **Debugging**: Track exactly when hand was detected/lost
+✅ **Analytics**: See gesture distribution over time
+✅ **Validation**: Confirm commands were executed as expected
+✅ **Performance**: Monitor detection rate in real-time
+✅ **Audit Trail**: Complete record of all events
+✅ **Troubleshooting**: Compare logs to identify issues
+✅ **Real-time Monitoring**: Both console and file output simultaneously
+
+### How to Use Logs
+
+**1. Read Live Logs During Execution**:
+```powershell
+# PowerShell - watch logs as they update
+Get-Content logs/gesture_recognition_*.log -Wait
+```
+
+**2. Parse Logs for Analysis**:
+```powershell
+# Count detected frames
+(Get-Content logs/gesture_recognition_*.log) | Select-String "OK.*DETECTED" | Measure-Object -Line
+
+# Count failed frames
+(Get-Content logs/gesture_recognition_*.log) | Select-String "FAIL.*NOT DETECTED" | Measure-Object -Line
+
+# Find all commands
+(Get-Content logs/gesture_recognition_*.log) | Select-String "COMMAND"
+```
+
+**3. Extract Statistics**:
+```powershell
+# Get final statistics
+Get-Content logs/gesture_recognition_*.log | Select-String "SYSTEM STATISTICS" -A 30
+```
+
+### Log Files Location
+
+- **Directory**: `e:\Project\Hand Gesture Controller\logs\`
+- **File Pattern**: `gesture_recognition_YYYYMMDD_HHMMSS.log`
+- **Example**: `gesture_recognition_20260313_143022.log`
+
+### Integration with GESTURE_CONTROLS.md
+
+- Created [GESTURE_CONTROLS.md](GESTURE_CONTROLS.md) with:
+  - Complete gesture mapping documentation
+  - Game compatibility guide
+  - Log format examples
+  - Troubleshooting guide
+  - Performance metrics
+
+### Status Summary
+
+✅ Logging system fully integrated into main_mediapipe.py
+✅ All key events logged (detection, classification, commands)
+✅ Real-time console + file output
+✅ Statistics system enhanced with logging
+✅ Complete gesture control documentation created
+✅ System ready for production testing
+
+### Next Testing Phase
+
+1. Run: `python src/main_mediapipe.py`
+2. Make gestures and watch logs in real-time
+3. Press 's' to get statistics breakdown
+4. Press 'q' to quit and review complete log
+
+Status: **READY FOR USER TESTING** ✅

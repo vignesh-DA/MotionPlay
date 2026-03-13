@@ -32,6 +32,8 @@ import time
 from enum import Enum
 from collections import deque
 import os
+import logging
+from datetime import datetime
 
 # Try new Tasks API first, fall back to solutions API
 try:
@@ -41,6 +43,22 @@ except ImportError:
     # Use old solutions API
     USE_TASKS_API = False
     print("Using MediaPipe solutions.hands API")
+
+# Setup logging
+log_dir = "logs"
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+
+log_filename = f"{log_dir}/gesture_recognition_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - [%(levelname)s] - %(message)s',
+    handlers=[
+        logging.FileHandler(log_filename),
+        logging.StreamHandler()  # Also print to console
+    ]
+)
+logger = logging.getLogger(__name__)
 
 
 class GestureType(Enum):
@@ -85,6 +103,10 @@ class HandGestureRecognizer:
     
     def __init__(self):
         """Initialize MediaPipe Hand Detector (uses solutions API for compatibility)."""
+        logger.info("="*70)
+        logger.info("HAND GESTURE RECOGNITION - INITIALIZATION")
+        logger.info("="*70)
+        
         # MediaPipe setup
         self.mp_hands = mp.solutions.hands
         self.mp_drawing = mp.solutions.drawing_utils
@@ -97,11 +119,19 @@ class HandGestureRecognizer:
             min_tracking_confidence=0.5
         )
         
+        logger.info("✓ MediaPipe Hand Detector initialized")
+        logger.info(f"  - Detection confidence: 0.7")
+        logger.info(f"  - Tracking confidence: 0.5")
+        logger.info(f"  - Max hands: 1")
+        
         # Gesture smoothing (temporal filtering)
         self.gesture_history = deque(maxlen=5)
         self.last_gesture = GestureType.UNDEFINED
         self.last_command_time = 0
         self.command_cooldown = 0.3  # seconds
+        
+        logger.info(f"  - Command cooldown: {self.command_cooldown}s")
+        logger.info(f"  - Gesture smoothing: 5-frame history with 3-frame stability")
         
         # Statistics
         self.frame_count = 0
@@ -120,11 +150,12 @@ class HandGestureRecognizer:
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         self.cap.set(cv2.CAP_PROP_FPS, 30)
         
-        print("✓ MediaPipe HandLandmarker (Tasks API) initialized")
-        print(f"  - Max hands: 1")
-        print(f"  - Detection confidence: 0.7")
-        print(f"  - Tracking confidence: 0.5")
-        print(f"  - Command cooldown: {self.command_cooldown}s")
+        logger.info("✓ Video capture initialized")
+        logger.info(f"  - Resolution: 1280x720")
+        logger.info(f"  - Target FPS: 30")
+        logger.info(f"  - Log file: {log_filename}")
+        logger.info("="*70)
+        logger.info("")
     
     def detect_hand(self, frame):
         """
@@ -294,7 +325,9 @@ class HandGestureRecognizer:
                     'down': 'slide'
                 }
                 if key in action_map:
-                    self.command_counts[action_map[key]] += 1
+                    action = action_map[key]
+                    self.command_counts[action] += 1
+                    logger.info(f"Frame {self.frame_count}: [COMMAND] {gesture.value} → {key.upper()} key ({action})")
                 
                 return True
             except Exception as e:
@@ -398,18 +431,24 @@ class HandGestureRecognizer:
     
     def run(self):
         """Main processing loop."""
-        print("\n" + "="*70)
-        print("MEDIAPIPE HAND GESTURE RECOGNITION - GAME CONTROLLER")
-        print("="*70)
-        print("\nGesture Mapping:")
-        print("  ✓ OPEN_PALM     → UP arrow (Jump)")
-        print("  ✓ CLOSED_FIST   → DOWN arrow (Slide)")
-        print("  ✓ INDEX_RIGHT   → RIGHT arrow (Move right)")
-        print("  ✓ INDEX_LEFT    → LEFT arrow (Move left)")
-        print("\nControls:")
-        print("  'q' - Quit")
-        print("  's' - Show statistics")
-        print("\nStarting detection...\n")
+        logger.info("")
+        logger.info("="*70)
+        logger.info("MEDIAPIPE HAND GESTURE RECOGNITION - GAME CONTROLLER")
+        logger.info("="*70)
+        logger.info("")
+        logger.info("GESTURE MAPPING:")
+        logger.info("  ✓ OPEN_PALM     → UP arrow key (Jump)")
+        logger.info("  ✓ CLOSED_FIST   → DOWN arrow key (Slide)")
+        logger.info("  ✓ INDEX_RIGHT   → RIGHT arrow key (Move right)")
+        logger.info("  ✓ INDEX_LEFT    → LEFT arrow key (Move left)")
+        logger.info("")
+        logger.info("CONTROLS (during execution):")
+        logger.info("  'q' - Quit application")
+        logger.info("  's' - Show statistics")
+        logger.info("")
+        logger.info("Starting real-time hand detection...")
+        logger.info("="*70)
+        logger.info("")
         
         try:
             while True:
@@ -436,6 +475,7 @@ class HandGestureRecognizer:
                     
                     # Classify gesture
                     current_gesture = self.classify_gesture(landmarks_pos, frame.shape)
+                    finger_count = self.count_fingers(landmarks_pos)
                     
                     # Smooth gesture
                     smoothed_gesture = self.smooth_gesture(current_gesture)
@@ -443,6 +483,10 @@ class HandGestureRecognizer:
                     
                     # Track gesture counts
                     self.gesture_counts[smoothed_gesture.value] += 1
+                    
+                    # Log every 30 frames
+                    if self.frame_count % 30 == 0:
+                        logger.info(f"Frame {self.frame_count}: [OK] DETECTED - Gesture: {smoothed_gesture.value} (fingers: {finger_count})")
                     
                     # Execute command
                     command_executed = self.execute_command(smoothed_gesture)
@@ -454,6 +498,10 @@ class HandGestureRecognizer:
                     self.draw_gesture_display(frame, smoothed_gesture)
                 else:
                     # No hand detected
+                    # Log every 60 frames to avoid log spam
+                    if self.frame_count % 60 == 0:
+                        logger.info(f"Frame {self.frame_count}: [FAIL] NOT DETECTED")
+                    
                     self.draw_gesture_display(frame, GestureType.UNDEFINED)
                     cv2.putText(frame, "No hand detected", (30, 70),
                                cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3)
@@ -464,50 +512,65 @@ class HandGestureRecognizer:
                 # Handle user input
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):
-                    print("Quitting...")
+                    logger.info("User requested quit (pressed 'q')")
                     break
                 elif key == ord('s'):
                     self.print_statistics()
         
         except KeyboardInterrupt:
-            print("\nInterrupted by user")
+            logger.info("Interrupted by user (Ctrl+C)")
         finally:
             self.shutdown()
     
     def print_statistics(self):
         """Print system statistics."""
-        print("\n" + "="*70)
-        print("SYSTEM STATISTICS")
-        print("="*70)
+        logger.info("")
+        logger.info("="*70)
+        logger.info("SYSTEM STATISTICS")
+        logger.info("="*70)
         
         detection_rate = 100 * self.hands_detected / max(1, self.frame_count)
-        print(f"\nFrame Processing:")
-        print(f"  Total frames: {self.frame_count}")
-        print(f"  Hands detected: {self.hands_detected}")
-        print(f"  Detection rate: {detection_rate:.1f}%")
+        logger.info("")
+        logger.info("Frame Processing:")
+        logger.info(f"  Total frames: {self.frame_count}")
+        logger.info(f"  Hands detected: {self.hands_detected}")
+        logger.info(f"  Detection rate: {detection_rate:.1f}%")
         
-        print(f"\nGesture Classification:")
+        logger.info("")
+        logger.info("Gesture Classification:")
         for gesture, count in self.gesture_counts.items():
             if self.hands_detected > 0:
                 pct = 100 * count / self.hands_detected
-                print(f"  {gesture:20s}: {count:4d} ({pct:5.1f}%)")
+                logger.info(f"  {gesture:20s}: {count:4d} ({pct:5.1f}%)")
         
-        print(f"\nCommand Execution:")
+        logger.info("")
+        logger.info("Command Execution (Keyboard Actions):")
         total_commands = sum(self.command_counts.values())
         for action, count in self.command_counts.items():
             if total_commands > 0:
                 pct = 100 * count / total_commands
-                print(f"  {action:15s}: {count:4d} ({pct:5.1f}%)")
+                logger.info(f"  {action:15s}: {count:4d} ({pct:5.1f}%)")
         
-        print("="*70 + "\n")
+        logger.info("="*70)
+        logger.info("")
     
     def shutdown(self):
         """Cleanup resources."""
-        print("\nShutting down...")
+        logger.info("")
+        logger.info("="*70)
+        logger.info("SHUTDOWN")
+        logger.info("="*70)
+        logger.info("Closing resources...")
         self.cap.release()
         cv2.destroyAllWindows()
         self.hands.close()
-        print("✓ Cleanup complete")
+        logger.info("✓ Video capture released")
+        logger.info("✓ OpenCV windows closed")
+        logger.info("✓ MediaPipe detector closed")
+        logger.info("")
+        logger.info("Program terminated successfully.")
+        logger.info("Log file saved to: " + log_filename)
+        logger.info("="*70)
 
 
 if __name__ == "__main__":
