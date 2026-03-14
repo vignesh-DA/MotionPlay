@@ -3,36 +3,30 @@ REAL-TIME HAND GESTURE RECOGNITION - MEDIAPIPE VERSION
 ========================================================
 
 Uses MediaPipe Hands (solutions API) for 99%+ accurate hand detection + 21 keypoints.
-Classifies 4 gestures for Temple Run / Subway Surfers game control.
+Classifies 5 gestures for Temple Run / Subway Surfers game control.
 
-GESTURE MAPPING (v2.3 - Index Finger Direction):
-  1. OPEN_PALM        → UP arrow key (jump - 4-5 fingers open)
-  2. CLOSED_FIST      → DOWN arrow key (slide - 0-1 fingers closed)
-  3. Point LEFT       → LEFT arrow key (move left - index finger points left)
-  4. Point RIGHT      → RIGHT arrow key (move right - index finger points right)
+GESTURE MAPPING (v3.0 - 5 Gesture System):
+  1. OPEN_PALM        → NO ACTION (neutral - straight path)
+  2. THUMBS_UP        → UP arrow key (jump)
+  3. CLOSED_FIST      → DOWN arrow key (slide/duck)
+  4. Point LEFT       → LEFT arrow key (move left)
+  5. Point RIGHT      → RIGHT arrow key (move right)
 
 HOW TO USE:
-  Jump:    Open your hand (all 5 fingers spread)
-  Slide:   Close your fist (curl all fingers)
-  Move L:  Point your index finger to the LEFT
-  Move R:  Point your index finger to the RIGHT
+  Straight: Open your hand (all fingers spread) - no key pressed
+  Jump:     Thumbs up (only thumb raised)
+  Slide:    Close your fist (all fingers curled)
+  Move L:   Point your index finger to the LEFT
+  Move R:   Point your index finger to the RIGHT
 
 KEY ADVANTAGES:
-  ✓ Uses INDEX FINGER direction (tip vs knuckle) for left/right
-  ✓ Simple and clean gesture detection
+  ✓ 5 distinct gestures for full game control
+  ✓ OPEN_PALM = neutral (no accidental key presses on straight paths)
+  ✓ Index finger direction for left/right
   ✓ Works in ANY lighting condition
-  ✓ Intuitive and natural for gameplay
   ✓ Real-time 30+ FPS on CPU
 
-IMPROVEMENTS OVER HSV VERSION:
-  ✓ 99%+ accurate hand detection
-  ✓ Works in ANY lighting condition
-  ✓ 21 precise hand landmarks
-  ✓ NO HSV tuning needed
-  ✓ Faster & more reliable gesture classification
-  ✓ Real-time 30+ FPS on CPU
-
-Author:     Hand Gesture Controller v2.3
+Author:     Hand Gesture Controller v3.0
 Date:       2026
 Framework:  MediaPipe (solutions.hands API)
 """
@@ -87,10 +81,11 @@ logger.addHandler(console_handler)
 
 class GestureType(Enum):
     """Gesture classification enum."""
-    OPEN_PALM = "OPEN_PALM"
-    CLOSED_FIST = "CLOSED_FIST"
-    INDEX_RIGHT = "INDEX_RIGHT"
-    INDEX_LEFT = "INDEX_LEFT"
+    OPEN_PALM = "OPEN_PALM"       # Neutral - no action
+    THUMBS_UP = "THUMBS_UP"       # Jump (UP key)
+    CLOSED_FIST = "CLOSED_FIST"   # Slide (DOWN key)
+    INDEX_RIGHT = "INDEX_RIGHT"   # Move right (RIGHT key)
+    INDEX_LEFT = "INDEX_LEFT"     # Move left (LEFT key)
     UNDEFINED = "UNDEFINED"
 
 
@@ -265,13 +260,13 @@ class HandGestureRecognizer:
         """
         Classify hand gesture from landmarks.
         
-        GESTURE LOGIC (v2.3 - Index Finger Direction):
-          - ≥4 fingers raised → OPEN_PALM (jump/up)
-          - ≤1 finger raised → CLOSED_FIST (slide/down)
-          - 2-3 fingers raised → Use index finger pointing direction (left/right)
+        GESTURE LOGIC (v3.0 - 5 Gesture System):
+          - ≥3 non-thumb fingers raised → OPEN_PALM (neutral, no action)
+          - 0 non-thumb fingers + thumb raised → THUMBS_UP (jump/up)
+          - 0 non-thumb fingers + thumb closed → CLOSED_FIST (slide/down)
+          - 1-2 non-thumb fingers → check index finger direction (left/right)
           
-        Uses INDEX FINGER direction (tip vs knuckle) for left/right detection.
-        Compares fingertip (landmark 8) vs MCP knuckle (landmark 5) x-position.
+        Separates thumb from other fingers for reliable detection.
         
         Args:
             landmarks_pos: (21, 2) array of landmark positions
@@ -283,16 +278,24 @@ class HandGestureRecognizer:
         h, w = frame_shape[:2]
         finger_count, measurements = self.count_fingers(landmarks_pos)
         
-        # OPEN_PALM: 4-5 fingers raised
-        if finger_count >= 4:
+        # Separate thumb from non-thumb fingers
+        thumb_raised = measurements[0]['is_raised']  # Thumb is first in measurements
+        non_thumb_raised = sum(1 for m in measurements[1:] if m['is_raised'])
+        
+        # OPEN_PALM: 3+ non-thumb fingers raised → NEUTRAL (no action)
+        if non_thumb_raised >= 3:
             return GestureType.OPEN_PALM, finger_count, measurements
         
-        # CLOSED_FIST: 0-1 fingers raised
-        if finger_count <= 1:
-            return GestureType.CLOSED_FIST, finger_count, measurements
+        # No non-thumb fingers raised → check thumb
+        if non_thumb_raised == 0:
+            if thumb_raised:
+                # THUMBS_UP: Only thumb is raised → JUMP (UP key)
+                return GestureType.THUMBS_UP, finger_count, measurements
+            else:
+                # CLOSED_FIST: Everything closed → SLIDE (DOWN key)
+                return GestureType.CLOSED_FIST, finger_count, measurements
         
-        # LEFT/RIGHT: 2-3 fingers - use index finger pointing direction
-        # Compare index fingertip (landmark 8) vs index knuckle/MCP (landmark 5)
+        # 1-2 non-thumb fingers raised → LEFT/RIGHT by index finger direction
         index_tip_x = landmarks_pos[8][0]   # Index fingertip
         index_mcp_x = landmarks_pos[5][0]   # Index knuckle (MCP)
         
@@ -341,12 +344,16 @@ class HandGestureRecognizer:
         if current_time - self.last_command_time < self.command_cooldown:
             return False
         
+        # OPEN_PALM = neutral, no key press
+        if gesture == GestureType.OPEN_PALM:
+            return False
+        
         # Map gesture to keyboard command
         gesture_to_key = {
+            GestureType.THUMBS_UP: 'up',
+            GestureType.CLOSED_FIST: 'down',
             GestureType.INDEX_RIGHT: 'right',
-            GestureType.INDEX_LEFT: 'left',
-            GestureType.OPEN_PALM: 'up',
-            GestureType.CLOSED_FIST: 'down'
+            GestureType.INDEX_LEFT: 'left'
         }
         
         if gesture in gesture_to_key:
@@ -417,7 +424,8 @@ class HandGestureRecognizer:
         
         # Gesture name with color coding
         gesture_color_map = {
-            GestureType.OPEN_PALM: (0, 255, 255),      # Yellow - Jump
+            GestureType.OPEN_PALM: (0, 255, 0),        # Green - Neutral (no action)
+            GestureType.THUMBS_UP: (0, 255, 255),      # Yellow - Jump
             GestureType.CLOSED_FIST: (255, 0, 255),    # Magenta - Slide
             GestureType.INDEX_RIGHT: (0, 165, 255),    # Orange - Right
             GestureType.INDEX_LEFT: (255, 0, 0),       # Blue - Left
@@ -438,10 +446,11 @@ class HandGestureRecognizer:
         
         # Draw keyboard command
         gesture_to_display = {
+            GestureType.OPEN_PALM: '— NEUTRAL (no key)',
+            GestureType.THUMBS_UP: '↑ UP KEY (JUMP)',
+            GestureType.CLOSED_FIST: '↓ DOWN KEY (SLIDE)',
             GestureType.INDEX_RIGHT: '→ RIGHT KEY',
-            GestureType.INDEX_LEFT: '← LEFT KEY',
-            GestureType.OPEN_PALM: '↑ UP KEY (JUMP)',
-            GestureType.CLOSED_FIST: '↓ DOWN KEY (SLIDE)'
+            GestureType.INDEX_LEFT: '← LEFT KEY'
         }
         
         if gesture in gesture_to_display:
@@ -478,11 +487,12 @@ class HandGestureRecognizer:
         logger.info("MEDIAPIPE HAND GESTURE RECOGNITION - GAME CONTROLLER")
         logger.info("="*70)
         logger.info("")
-        logger.info("GESTURE MAPPING (v2.3 - Index Finger Direction):")
-        logger.info("  ✓ OPEN_PALM     → UP arrow key (Jump) - 4-5 fingers")
-        logger.info("  ✓ CLOSED_FIST   → DOWN arrow key (Slide) - 0-1 fingers")
-        logger.info("  ✓ Point LEFT    → LEFT arrow key (Move left) - index finger")
-        logger.info("  ✓ Point RIGHT   → RIGHT arrow key (Move right) - index finger")
+        logger.info("GESTURE MAPPING (v3.0 - 5 Gesture System):")
+        logger.info("  ✓ OPEN_PALM     → NO ACTION (neutral/straight path)")
+        logger.info("  ✓ THUMBS_UP     → UP arrow key (Jump)")
+        logger.info("  ✓ CLOSED_FIST   → DOWN arrow key (Slide)")
+        logger.info("  ✓ Point LEFT    → LEFT arrow key (Move left)")
+        logger.info("  ✓ Point RIGHT   → RIGHT arrow key (Move right)")
         logger.info("")
         logger.info("CONTROLS (during execution):")
         logger.info("  'q' - Quit application")
