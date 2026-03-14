@@ -215,28 +215,63 @@ class HandGestureRecognizer:
         - Ring: 13=MCP, 14=PIP, 15=DIP, 16=tip
         - Pinky: 17=MCP, 18=PIP, 19=DIP, 20=tip
         
-        Finger is "raised" if DIP (knuckle) is HIGHER than MCP (lower Y value).
-        Uses comparison: DIP.y < MCP.y means finger is extended (raised)
+        THUMB: Uses distance-based detection because thumb moves SIDEWAYS,
+               not vertically. Measures distance from thumb tip to index MCP
+               and compares against palm size.
+        OTHER FINGERS: Uses Y-coordinate comparison (tip higher than DIP = raised).
         
         Returns:
             tuple: (raised_count, detailed_measurements) 
                    detailed_measurements = list of dicts with finger measurements
         """
-        # For each finger, compare DIP position to MPC position
-        # If DIP is higher (smaller Y), finger is raised
-        # If DIP is lower (larger Y), finger is closed
+        raised_count = 0
+        measurements = []
+        margin = 10  # pixels threshold for non-thumb fingers
         
+        # ── THUMB DETECTION (distance-based) ──
+        # The thumb extends SIDEWAYS, not vertically like other fingers.
+        # Y-coordinate comparison gives INVERTED results for thumb!
+        # Instead: measure how far thumb tip is from index finger base.
+        #   Fist:      thumb curled in  → tip CLOSE to index MCP → NOT raised
+        #   Thumbs up: thumb extended   → tip FAR from index MCP → RAISED
+        thumb_tip = landmarks_pos[4]
+        thumb_ip = landmarks_pos[3]
+        index_mcp = landmarks_pos[5]
+        wrist = landmarks_pos[0]
+        middle_mcp = landmarks_pos[9]
+        
+        # Palm size = wrist to middle MCP (makes threshold scale-independent)
+        palm_size = np.sqrt((wrist[0] - middle_mcp[0])**2 + (wrist[1] - middle_mcp[1])**2)
+        
+        # Distance from thumb tip to index finger MCP
+        thumb_to_index = np.sqrt(
+            (thumb_tip[0] - index_mcp[0])**2 + (thumb_tip[1] - index_mcp[1])**2
+        )
+        
+        # Thumb is extended if distance exceeds 50% of palm size
+        thumb_threshold = palm_size * 0.5
+        thumb_raised = thumb_to_index > thumb_threshold
+        
+        if thumb_raised:
+            raised_count += 1
+        
+        measurements.append({
+            'finger': 'Thumb',
+            'tip_y': int(thumb_tip[1]),
+            'dip_y': int(thumb_ip[1]),
+            'distance': int(thumb_to_index),
+            'margin': int(thumb_threshold),
+            'is_raised': thumb_raised
+        })
+        
+        # ── OTHER FINGERS (Y-coordinate comparison) ──
+        # Finger is "raised" if tip is HIGHER than DIP (lower Y in screen coords)
         fingers = [
-            (4, 3, "Thumb"),      # Thumb: tip=4, IP=3
             (8, 7, "Index"),      # Index: tip=8, DIP=7  
             (12, 11, "Middle"),   # Middle: tip=12, DIP=11
             (16, 15, "Ring"),     # Ring: tip=16, DIP=15
             (20, 19, "Pinky"),    # Pinky: tip=20, DIP=19
         ]
-        
-        raised_count = 0
-        measurements = []
-        margin = 10  # pixels threshold (raised from 3 to reduce flickering)
         
         for tip_idx, dip_idx, finger_name in fingers:
             tip_y = landmarks_pos[tip_idx][1]
