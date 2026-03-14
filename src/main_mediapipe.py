@@ -5,23 +5,23 @@ REAL-TIME HAND GESTURE RECOGNITION - MEDIAPIPE VERSION
 Uses MediaPipe Hands (solutions API) for 99%+ accurate hand detection + 21 keypoints.
 Classifies 5 gestures for Temple Run / Subway Surfers game control.
 
-GESTURE MAPPING (v3.0 - 5 Gesture System):
-  1. OPEN_PALM        → NO ACTION (neutral - straight path)
-  2. THUMBS_UP        → UP arrow key (jump)
-  3. CLOSED_FIST      → DOWN arrow key (slide/duck)
+GESTURE MAPPING (v4.0 - 5 Gesture System - Reversed):
+  1. CLOSED_FIST      → NO ACTION (neutral - straight path / resting position)
+  2. OPEN_PALM        → UP arrow key (jump)
+  3. THUMBS_UP        → DOWN arrow key (slide/duck)
   4. Point LEFT       → LEFT arrow key (move left)
   5. Point RIGHT      → RIGHT arrow key (move right)
 
 HOW TO USE:
-  Straight: Open your hand (all fingers spread) - no key pressed
-  Jump:     Thumbs up (only thumb raised)
-  Slide:    Close your fist (all fingers curled)
+  Straight: Close your fist (resting position) - no key pressed
+  Jump:     Open your hand (all fingers spread)
+  Slide:    Thumbs up (only thumb raised)
   Move L:   Point your index finger to the LEFT
   Move R:   Point your index finger to the RIGHT
 
 KEY ADVANTAGES:
   ✓ 5 distinct gestures for full game control
-  ✓ OPEN_PALM = neutral (no accidental key presses on straight paths)
+  ✓ CLOSED_FIST = neutral (no accidental key presses on straight paths)
   ✓ Index finger direction for left/right
   ✓ Works in ANY lighting condition
   ✓ Real-time 30+ FPS on CPU
@@ -81,9 +81,9 @@ logger.addHandler(console_handler)
 
 class GestureType(Enum):
     """Gesture classification enum."""
-    OPEN_PALM = "OPEN_PALM"       # Neutral - no action
-    THUMBS_UP = "THUMBS_UP"       # Jump (UP key)
-    CLOSED_FIST = "CLOSED_FIST"   # Slide (DOWN key)
+    OPEN_PALM = "OPEN_PALM"       # Jump (UP key)
+    THUMBS_UP = "THUMBS_UP"       # Slide (DOWN key)
+    CLOSED_FIST = "CLOSED_FIST"   # Neutral - no action
     INDEX_RIGHT = "INDEX_RIGHT"   # Move right (RIGHT key)
     INDEX_LEFT = "INDEX_LEFT"     # Move left (LEFT key)
     UNDEFINED = "UNDEFINED"
@@ -146,11 +146,13 @@ class HandGestureRecognizer:
         # Gesture smoothing (temporal filtering)
         self.gesture_history = deque(maxlen=5)
         self.last_gesture = GestureType.UNDEFINED
+        self.last_lr_gesture = GestureType.INDEX_RIGHT  # fallback for left/right dead-zone
+        self.last_executed_gesture = None  # tracks last fired gesture for single-fire mode
         self.last_command_time = 0
-        self.command_cooldown = 0.15  # seconds (faster response for gameplay)
+        self.command_cooldown = 0.20  # seconds (balanced response vs stability)
         
-        logger.info(f"  - Command cooldown: {self.command_cooldown}s (reduced for gameplay)")
-        logger.info(f"  - Gesture smoothing: Instant (1-frame) for faster response")
+        logger.info(f"  - Command cooldown: {self.command_cooldown}s (balanced for stability)")
+        logger.info(f"  - Gesture smoothing: 2-of-3 majority vote for stability")
         
         # Statistics
         self.frame_count = 0
@@ -234,7 +236,7 @@ class HandGestureRecognizer:
         
         raised_count = 0
         measurements = []
-        margin = 3  # pixels threshold
+        margin = 10  # pixels threshold (raised from 3 to reduce flickering)
         
         for tip_idx, dip_idx, finger_name in fingers:
             tip_y = landmarks_pos[tip_idx][1]
@@ -298,45 +300,80 @@ class HandGestureRecognizer:
         # 1-2 non-thumb fingers raised → LEFT/RIGHT by index finger direction
         index_tip_x = landmarks_pos[8][0]   # Index fingertip
         index_mcp_x = landmarks_pos[5][0]   # Index knuckle (MCP)
+        lr_dead_zone = 15  # pixels — prevents rapid LEFT/RIGHT oscillation
         
-        if index_tip_x < index_mcp_x:
+        if index_tip_x < index_mcp_x - lr_dead_zone:
+            self.last_lr_gesture = GestureType.INDEX_LEFT
             return GestureType.INDEX_LEFT, finger_count, measurements
-        else:
+        elif index_tip_x > index_mcp_x + lr_dead_zone:
+            self.last_lr_gesture = GestureType.INDEX_RIGHT
             return GestureType.INDEX_RIGHT, finger_count, measurements
+        else:
+            # Inside dead-zone: hold previous left/right direction
+            return self.last_lr_gesture, finger_count, measurements
     
     def smooth_gesture(self, current_gesture):
         """
-        Gesture smoothing for gameplay (instant response with stability).
+        Gesture smoothing using 2-out-of-3 majority vote.
         
-        For gameplay: Instantly confirms valid gestures (0 frame latency)
-        For stability: Holds last valid gesture when hand is lost (UNDEFINED)
+        A gesture must appear at least 2 times in the last 3 frames to be
+        confirmed. This adds ~66ms latency (2 frames at 30 FPS) but eliminates
+        single-frame glitches that cause flickering.
         
         Args:
             current_gesture: GestureType from current frame
             
         Returns:
-            GestureType: Smooth gesture (instant response, prevents jitter)
+            GestureType: Smoothed gesture (majority vote of last 3 frames)
         """
         self.gesture_history.append(current_gesture)
         
-        # Instant confirmation for valid gestures (0 frame latency for gameplay)
-        if current_gesture != GestureType.UNDEFINED:
-            return current_gesture
+        # Need at least 3 frames of history for majority vote
+        if len(self.gesture_history) < 3:
+            if current_gesture != GestureType.UNDEFINED:
+                return current_gesture
+            return self.last_gesture
         
-        # Hand lost: hold previous gesture briefly to prevent jitter
+        # 2-out-of-3 majority vote from last 3 frames
+        recent = list(self.gesture_history)[-3:]
+        for gesture in recent:
+            if gesture != GestureType.UNDEFINED and recent.count(gesture) >= 2:
+                return gesture
+        
+        # No majority — hold previous gesture
         return self.last_gesture
     
     def execute_command(self, gesture):
         """
-        Execute keyboard command for gesture.
+        Execute keyboard command for gesture (SINGLE-FIRE mode).
+        
+        Only sends a key press when the gesture CHANGES — not while it's held.
+        This matches Subway Surfers gameplay where one swipe = one lane change.
+        
+        Flow:
+          Point RIGHT → sends RIGHT once → character moves one lane
+          Keep pointing RIGHT → nothing (already sent)
+          Return to OPEN_PALM → resets
+          Point RIGHT again → sends RIGHT once again
         
         Args:
             gesture: GestureType to execute
             
         Returns:
-            bool: True if command executed, False if on cooldown
+            bool: True if command executed, False if skipped
         """
         if gesture == GestureType.UNDEFINED:
+            return False
+        
+        # CLOSED_FIST = neutral (resting position), no key press — but reset the tracker
+        # so the next gesture fires fresh
+        if gesture == GestureType.CLOSED_FIST:
+            self.last_executed_gesture = None
+            return False
+        
+        # SINGLE-FIRE: only send key when gesture CHANGES
+        # If same gesture as last fired one, skip (don't spam)
+        if gesture == self.last_executed_gesture:
             return False
         
         # Check cooldown
@@ -344,14 +381,10 @@ class HandGestureRecognizer:
         if current_time - self.last_command_time < self.command_cooldown:
             return False
         
-        # OPEN_PALM = neutral, no key press
-        if gesture == GestureType.OPEN_PALM:
-            return False
-        
         # Map gesture to keyboard command
         gesture_to_key = {
-            GestureType.THUMBS_UP: 'up',
-            GestureType.CLOSED_FIST: 'down',
+            GestureType.OPEN_PALM: 'up',
+            GestureType.THUMBS_UP: 'down',
             GestureType.INDEX_RIGHT: 'right',
             GestureType.INDEX_LEFT: 'left'
         }
@@ -362,6 +395,7 @@ class HandGestureRecognizer:
             try:
                 pyautogui.press(key)
                 self.last_command_time = current_time
+                self.last_executed_gesture = gesture  # remember what we fired
                 
                 # Track command
                 action_map = {
@@ -424,12 +458,12 @@ class HandGestureRecognizer:
         
         # Gesture name with color coding
         gesture_color_map = {
-            GestureType.OPEN_PALM: (0, 255, 0),        # Green - Neutral (no action)
-            GestureType.THUMBS_UP: (0, 255, 255),      # Yellow - Jump
-            GestureType.CLOSED_FIST: (255, 0, 255),    # Magenta - Slide
-            GestureType.INDEX_RIGHT: (0, 165, 255),    # Orange - Right
-            GestureType.INDEX_LEFT: (255, 0, 0),       # Blue - Left
-            GestureType.UNDEFINED: (128, 128, 128)     # Gray
+            GestureType.CLOSED_FIST: (0, 255, 0),        # Green - Neutral (resting)
+            GestureType.OPEN_PALM: (0, 255, 255),        # Yellow - Jump
+            GestureType.THUMBS_UP: (255, 0, 255),        # Magenta - Slide
+            GestureType.INDEX_RIGHT: (0, 165, 255),      # Orange - Right
+            GestureType.INDEX_LEFT: (255, 0, 0),          # Blue - Left
+            GestureType.UNDEFINED: (128, 128, 128)        # Gray
         }
         
         color = gesture_color_map.get(gesture, (128, 128, 128))
@@ -446,9 +480,9 @@ class HandGestureRecognizer:
         
         # Draw keyboard command
         gesture_to_display = {
-            GestureType.OPEN_PALM: '— NEUTRAL (no key)',
-            GestureType.THUMBS_UP: '↑ UP KEY (JUMP)',
-            GestureType.CLOSED_FIST: '↓ DOWN KEY (SLIDE)',
+            GestureType.CLOSED_FIST: '— NEUTRAL (no key)',
+            GestureType.OPEN_PALM: '↑ UP KEY (JUMP)',
+            GestureType.THUMBS_UP: '↓ DOWN KEY (SLIDE)',
             GestureType.INDEX_RIGHT: '→ RIGHT KEY',
             GestureType.INDEX_LEFT: '← LEFT KEY'
         }
@@ -487,12 +521,12 @@ class HandGestureRecognizer:
         logger.info("MEDIAPIPE HAND GESTURE RECOGNITION - GAME CONTROLLER")
         logger.info("="*70)
         logger.info("")
-        logger.info("GESTURE MAPPING (v3.0 - 5 Gesture System):")
-        logger.info("  ✓ OPEN_PALM     → NO ACTION (neutral/straight path)")
-        logger.info("  ✓ THUMBS_UP     → UP arrow key (Jump)")
-        logger.info("  ✓ CLOSED_FIST   → DOWN arrow key (Slide)")
-        logger.info("  ✓ Point LEFT    → LEFT arrow key (Move left)")
-        logger.info("  ✓ Point RIGHT   → RIGHT arrow key (Move right)")
+        logger.info("GESTURE MAPPING (v4.0 - Reversed Gesture System):")
+        logger.info("  ✓ CLOSED_FIST    → NO ACTION (neutral/resting position)")
+        logger.info("  ✓ OPEN_PALM      → UP arrow key (Jump)")
+        logger.info("  ✓ THUMBS_UP      → DOWN arrow key (Slide)")
+        logger.info("  ✓ Point LEFT     → LEFT arrow key (Move left)")
+        logger.info("  ✓ Point RIGHT    → RIGHT arrow key (Move right)")
         logger.info("")
         logger.info("CONTROLS (during execution):")
         logger.info("  'q' - Quit application")
