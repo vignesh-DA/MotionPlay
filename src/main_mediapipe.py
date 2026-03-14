@@ -5,27 +5,34 @@ REAL-TIME HAND GESTURE RECOGNITION - MEDIAPIPE VERSION
 Uses MediaPipe Hands (solutions API) for 99%+ accurate hand detection + 21 keypoints.
 Classifies 4 gestures for Temple Run / Subway Surfers game control.
 
-GESTURE MAPPING (UPDATED - Position-Based Left/Right):
-  1. OPEN_PALM      → UP arrow key (jump - 4-5 fingers open)
-  2. CLOSED_FIST    → DOWN arrow key (slide - 0-1 fingers closed)
-  3. Hand on LEFT   → LEFT arrow key (move left - hand on left side of frame)
-  4. Hand on RIGHT  → RIGHT arrow key (move right - hand on right side of frame)
+GESTURE MAPPING (v2.3 - Index Finger Direction):
+  1. OPEN_PALM        → UP arrow key (jump - 4-5 fingers open)
+  2. CLOSED_FIST      → DOWN arrow key (slide - 0-1 fingers closed)
+  3. Point LEFT       → LEFT arrow key (move left - index finger points left)
+  4. Point RIGHT      → RIGHT arrow key (move right - index finger points right)
 
-KEY IMPROVEMENTS:
-  ✓ LEFT/RIGHT now use HAND POSITION instead of single-finger pointing
-  ✓ Much more reliable - works even with closed fist
-  ✓ Closed fist now correctly detected (was being mis-classified before)
-  ✓ No more need to point with index finger - just move your hand left/right!
+HOW TO USE:
+  Jump:    Open your hand (all 5 fingers spread)
+  Slide:   Close your fist (curl all fingers)
+  Move L:  Point your index finger to the LEFT
+  Move R:  Point your index finger to the RIGHT
+
+KEY ADVANTAGES:
+  ✓ Uses INDEX FINGER direction (tip vs knuckle) for left/right
+  ✓ Simple and clean gesture detection
+  ✓ Works in ANY lighting condition
+  ✓ Intuitive and natural for gameplay
+  ✓ Real-time 30+ FPS on CPU
 
 IMPROVEMENTS OVER HSV VERSION:
-  ✓ 99%+ accurate hand detection (vs 100% at best with HSV)
-  ✓ Works in ANY lighting condition (vs HSV lighting-dependent)
-  ✓ 21 precise hand landmarks (vs contour-based estimation)
-  ✓ NO HSV tuning needed (works out-of-box)
+  ✓ 99%+ accurate hand detection
+  ✓ Works in ANY lighting condition
+  ✓ 21 precise hand landmarks
+  ✓ NO HSV tuning needed
   ✓ Faster & more reliable gesture classification
   ✓ Real-time 30+ FPS on CPU
 
-Author:     Hand Gesture Controller v2.1
+Author:     Hand Gesture Controller v2.3
 Date:       2026
 Framework:  MediaPipe (solutions.hands API)
 """
@@ -258,18 +265,13 @@ class HandGestureRecognizer:
         """
         Classify hand gesture from landmarks.
         
-        UPDATED GESTURE LOGIC (v2.2 - Wrist-Based Left/Right):
+        GESTURE LOGIC (v2.3 - Index Finger Direction):
           - ≥4 fingers raised → OPEN_PALM (jump/up)
-          - ≤1 finger raised → CLOSED_FIST (slide/down) 
-          - Wrist on LEFT side of frame → INDEX_LEFT (move left)
-          - Wrist on RIGHT side of frame → INDEX_RIGHT (move right)
+          - ≤1 finger raised → CLOSED_FIST (slide/down)
+          - 2-3 fingers raised → Use index finger pointing direction (left/right)
           
-        KEY IMPROVEMENT: Uses WRIST position (landmark 0) for left/right detection.
-        This is much more reliable than hand center or individual finger positions!
-        
-        Wrist position reflects where your arm/hand is in the frame:
-        - Wrist x < frame_width/2 = hand on left side = move left
-        - Wrist x > frame_width/2 = hand on right side = move right
+        Uses INDEX FINGER direction (tip vs knuckle) for left/right detection.
+        Compares fingertip (landmark 8) vs MCP knuckle (landmark 5) x-position.
         
         Args:
             landmarks_pos: (21, 2) array of landmark positions
@@ -281,19 +283,20 @@ class HandGestureRecognizer:
         h, w = frame_shape[:2]
         finger_count, measurements = self.count_fingers(landmarks_pos)
         
-        # OPEN_PALM: 4-5 fingers raised (tolerance for imperfect hand positions)
+        # OPEN_PALM: 4-5 fingers raised
         if finger_count >= 4:
             return GestureType.OPEN_PALM, finger_count, measurements
         
-        # CLOSED_FIST: 0-1 fingers raised (fist completely closed or only thumb up)
+        # CLOSED_FIST: 0-1 fingers raised
         if finger_count <= 1:
             return GestureType.CLOSED_FIST, finger_count, measurements
         
-        # LEFT/RIGHT: Use WRIST position (landmark 0) for detection
-        # Wrist is at the base of the hand - most reliable indicator of hand location
-        wrist_x = landmarks_pos[0][0]  # Landmark 0 = wrist
+        # LEFT/RIGHT: 2-3 fingers - use index finger pointing direction
+        # Compare index fingertip (landmark 8) vs index knuckle/MCP (landmark 5)
+        index_tip_x = landmarks_pos[8][0]   # Index fingertip
+        index_mcp_x = landmarks_pos[5][0]   # Index knuckle (MCP)
         
-        if wrist_x < w / 2:
+        if index_tip_x < index_mcp_x:
             return GestureType.INDEX_LEFT, finger_count, measurements
         else:
             return GestureType.INDEX_RIGHT, finger_count, measurements
@@ -475,11 +478,11 @@ class HandGestureRecognizer:
         logger.info("MEDIAPIPE HAND GESTURE RECOGNITION - GAME CONTROLLER")
         logger.info("="*70)
         logger.info("")
-        logger.info("GESTURE MAPPING (UPDATED - Position-Based Left/Right):")
-        logger.info("  ✓ OPEN_PALM     → UP arrow key (Jump) - open hand with 4+ fingers")
-        logger.info("  ✓ CLOSED_FIST   → DOWN arrow key (Slide) - closed fist or thumb only")
-        logger.info("  ✓ Hand on LEFT  → LEFT arrow key (Move left) - based on hand position")
-        logger.info("  ✓ Hand on RIGHT → RIGHT arrow key (Move right) - based on hand position")
+        logger.info("GESTURE MAPPING (v2.3 - Index Finger Direction):")
+        logger.info("  ✓ OPEN_PALM     → UP arrow key (Jump) - 4-5 fingers")
+        logger.info("  ✓ CLOSED_FIST   → DOWN arrow key (Slide) - 0-1 fingers")
+        logger.info("  ✓ Point LEFT    → LEFT arrow key (Move left) - index finger")
+        logger.info("  ✓ Point RIGHT   → RIGHT arrow key (Move right) - index finger")
         logger.info("")
         logger.info("CONTROLS (during execution):")
         logger.info("  'q' - Quit application")
