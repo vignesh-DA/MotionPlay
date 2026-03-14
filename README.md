@@ -27,7 +27,7 @@ This system enables **real-time hand gesture recognition** to control games usin
 
 ✅ **Instant Hand Detection**: 99%+ accuracy using MediaPipe Hands (21-point landmarks)  
 ✅ **Real-Time Performance**: 30+ FPS at 1280×720 resolution on standard CPU  
-✅ **4 Core Gestures**: Open Palm, Closed Fist, Point Right, Point Left  
+✅ **5 Core Gestures**: Open Palm, Closed Fist, Thumbs Up, Point Right, Point Left  
 ✅ **Ultra-Low Latency**: 40-65 ms end-to-end (hand motion to keyboard command)  
 ✅ **Production Logging**: Complete event tracking with file + console output  
 ✅ **Zero Setup Time**: Works immediately after installation (no calibration needed)  
@@ -57,13 +57,14 @@ Webcam Input (30+ FPS)
     - Hand position mapping
     ↓
 [Gesture Classification]
-    - 4-gesture mapping (OPEN_PALM, CLOSED_FIST, INDEX_RIGHT, INDEX_LEFT)
+    - 5-gesture mapping (CLOSED_FIST, OPEN_PALM, THUMBS_UP, INDEX_RIGHT, INDEX_LEFT)
     - Temporal smoothing (5-frame history)
     - Confidence-based stability filter
     ↓
 [Command Execution]
     - Keyboard command mapping (UP, DOWN, LEFT, RIGHT)
-    - 0.3s command cooldown (anti-spam)
+    - Single-fire mode (key sent once per gesture change)
+    - 0.2s command cooldown (anti-spam)
     - Real-time logging of all events
     ↓
 [Visual Feedback & Logging]
@@ -208,10 +209,11 @@ python src/main.py --width 1280 --height 720
 2. **Show your hand**: Point palm at camera from 30-60 cm away
 3. **Watch for detection**: You should see skeleton overlaid on hand
 4. **Make gestures**:
-   - **OPEN_PALM**: Spread 5 fingers wide → Sends **UP** arrow key (Jump)
-   - **CLOSED_FIST**: Make a fist → Sends **DOWN** arrow key (Slide)
-   - **INDEX_RIGHT**: Point right index → Sends **RIGHT** arrow key
-   - **INDEX_LEFT**: Point left index → Sends **LEFT** arrow key
+   - **CLOSED_FIST**: Make a fist → **No action** (neutral/resting position)
+   - **OPEN_PALM**: Spread all fingers wide → Sends **UP** arrow key (Jump)
+   - **THUMBS_UP**: Raise only your thumb → Sends **DOWN** arrow key (Slide)
+   - **INDEX_RIGHT**: Point index finger to the right → Sends **RIGHT** arrow key
+   - **INDEX_LEFT**: Point index finger to the left → Sends **LEFT** arrow key
 5. **Watch the logs**: See real-time events as you gesture
 6. **Quit**: Press 'q' key or Ctrl+C
 
@@ -229,20 +231,22 @@ python src/main.py --width 1280 --height 720
 
 ### Gesture Mapping
 
-The system recognizes **4 core gestures** and maps them to keyboard controls:
+The system recognizes **5 core gestures** and maps them to keyboard controls:
 
-| Gesture | Hand Position | Fingers | Game Action | Keyboard | Result |
-|---------|---------------|---------|------------|----------|--------|
-| **OPEN_PALM** 🖐️ | Spread fingers wide | 5 raised | **Jump** | UP ↑ | Character jumps over obstacles |
-| **CLOSED_FIST** ✊ | All fingers closed | 0 raised | **Slide** | DOWN ↓ | Character slides under obstacles |
-| **INDEX_RIGHT** 👉 | Point right | 1 raised + right position | **Move Right** | RIGHT → | Character moves rightward |
-| **INDEX_LEFT** ☝️ | Point left | 1 raised + left position | **Move Left** | LEFT ← | Character moves leftward |
+| Gesture | Hand Position | Detection | Game Action | Keyboard | Result |
+|---------|---------------|-----------|------------|----------|--------|
+| **CLOSED_FIST** ✊ | All fingers closed | 0 fingers raised | **Neutral** | *None* | Resting position (no key pressed) |
+| **OPEN_PALM** 🖐️ | Spread all fingers wide | ≥3 non-thumb fingers raised | **Jump** | UP ↑ | Character jumps over obstacles |
+| **THUMBS_UP** 👍 | Only thumb raised | 0 non-thumb + thumb extended | **Slide** | DOWN ↓ | Character slides under obstacles |
+| **INDEX_RIGHT** 👉 | Point index finger right | 1-2 non-thumb + index tip right of knuckle | **Move Right** | RIGHT → | Character moves rightward |
+| **INDEX_LEFT** 👈 | Point index finger left | 1-2 non-thumb + index tip left of knuckle | **Move Left** | LEFT ← | Character moves leftward |
 
 **How It Works:**
 - System detects hand using **MediaPipe** (21 landmark points)
-- Analyzes finger positions (raised vs. closed) using DIP/tip comparison
-- Classifies gesture with 5-frame smoothing (removes jitter)
-- Executes keyboard command with 0.3s cooldown (prevents spam)
+- Analyzes finger positions: distance-based for thumb, Y-coordinate for other fingers
+- Classifies gesture with 2-of-3 majority vote smoothing (removes jitter)
+- Uses single-fire mode (key sent once per gesture change, not while held)
+- Executes keyboard command with 0.2s cooldown (prevents spam)
 - Logs all events to file + console in real-time
 
 ### Game Compatibility
@@ -277,7 +281,7 @@ The system recognizes **4 core gestures** and maps them to keyboard controls:
 |--------|-------|-----------|-------|
 | **Hand Detection** | 99%+ | Good lighting | MediaPipe Hands accuracy |
 | **Hand Detection** | 95%+ | Mixed lighting | Acceptable variance |
-| **Gesture Classification** | 90%+ | Proper hand position | 4-gesture classification |
+| **Gesture Classification** | 90%+ | Proper hand position | 5-gesture classification |
 | **Finger Counting** | 88%+ | Full hand visible | Limited by geometry |
 | **False Positive Rate** | 2-5% | Varied background | Excellent rejection rate |
 
@@ -318,7 +322,7 @@ Lighting: Controlled environment
 **Key Methods:**
 - `detect_hand(frame)` - MediaPipe 21-landmark detection
 - `count_fingers(landmarks)` - Analyze raised vs closed fingers
-- `classify_gesture(landmarks, frame_shape)` - Map 4 gesture types
+- `classify_gesture(landmarks, frame_shape)` - Map 5 gesture types
 - `smooth_gesture(raw_gesture)` - 5-frame temporal filtering
 - `execute_command(gesture)` - Send keyboard commands + logging
 - `run()` - Main execution loop with real-time display
@@ -328,7 +332,7 @@ Lighting: Controlled environment
 # Simplified flow
 frame → MediaPipe detection (21 landmarks)
      → count_fingers() → 0-5 raised fingers
-     → classify_gesture() → OPEN_PALM/CLOSED_FIST/INDEX_RIGHT/INDEX_LEFT
+     → classify_gesture() → CLOSED_FIST/OPEN_PALM/THUMBS_UP/INDEX_RIGHT/INDEX_LEFT
      → smooth_gesture(history) → stable gesture (3-frame consensus)
      → execute_command() → keyboard + logging
      → display visualization
@@ -413,42 +417,52 @@ Accuracy: 99%+ in controlled environments
 
 **How We Use It:**
 1. Extract all 21 landmarks from detected hand
-2. Compare tip vs DIP position for each finger
-3. If tip.y < dip.y - 5px → finger is raised
-4. Count raised fingers (0-5) → gesture classification
+2. **Thumb:** Measure distance from thumb tip to index MCP (distance-based, since thumb moves sideways)
+3. **Other fingers:** Compare tip vs DIP Y-position. If tip.y < dip.y - 10px → finger is raised
+4. Classify gesture based on finger states → 5 gesture types
 
 ### Finger Counting Algorithm
 **Logic:**  
 ```python
-# For each of 5 fingers:
-if tip_y_position < dip_y_position - 5:
-    # Tip is well above knuckle = RAISED
-    raised_count += 1
-else:
-    # Tip at or below knuckle = CLOSED
-    closed_count += 1
+# THUMB: distance-based (thumb moves sideways, not vertically)
+palm_size = distance(wrist, middle_mcp)  # scale-independent
+thumb_dist = distance(thumb_tip, index_mcp)
+thumb_raised = thumb_dist > (palm_size * 0.5)
 
-# Result: 0-5 raised fingers detected
+# OTHER FINGERS: Y-coordinate comparison
+for each finger (index, middle, ring, pinky):
+    if tip_y < dip_y - 10:  # tip is above knuckle
+        finger is RAISED
+    else:
+        finger is CLOSED
 ```
 
-**Why 5px margin?** Accounts for noise and subtle hand variations without false positives.
+**Why distance-based for thumb?** The thumb extends sideways, not vertically. Y-coordinate comparison gives inverted results for the thumb.
+
+**Why 10px margin for fingers?** Accounts for noise and subtle hand variations without false positives.
 
 **Time Complexity:** O(5) = O(1) constant time (always checking 5 fingers)
 
 ### Gesture Classification Rules
 **Decision Logic:**
 ```python
-if raised_fingers == 5:
-    gesture = OPEN_PALM → UP key
-elif raised_fingers == 0:
-    gesture = CLOSED_FIST → DOWN key
-elif raised_fingers == 1:
-    if hand_position_x > frame_width / 2:
+# Separate thumb from non-thumb fingers
+non_thumb_raised = count of raised fingers (index, middle, ring, pinky)
+
+if non_thumb_raised >= 3:
+    gesture = OPEN_PALM → UP key (Jump)
+elif non_thumb_raised == 0:
+    if thumb_raised:
+        gesture = THUMBS_UP → DOWN key (Slide)
+    else:
+        gesture = CLOSED_FIST → no action (Neutral)
+else:  # 1-2 non-thumb fingers raised
+    if index_tip_x < index_mcp_x - dead_zone:
+        gesture = INDEX_LEFT → LEFT key
+    elif index_tip_x > index_mcp_x + dead_zone:
         gesture = INDEX_RIGHT → RIGHT key
     else:
-        gesture = INDEX_LEFT → LEFT key
-else:
-    gesture = UNDEFINED → no action
+        hold previous left/right direction
 ```
 
 **Time Complexity:** O(1) - simple if-else logic
@@ -458,40 +472,45 @@ else:
 
 **Implementation:**
 ```python
-# Maintain 5-frame history of gestures
+# 2-out-of-3 majority vote from last 3 frames
 gesture_history = deque(maxlen=5)
-
-# Add current gesture to history
 gesture_history.append(current_gesture)
 
-# Only execute command if 3+ consecutive identical gestures
-count = gesture_history.count(most_common_gesture)
-if count >= 3:  # Stability threshold
-    execute_command(most_common_gesture)
+recent = last 3 frames from history
+for gesture in recent:
+    if recent.count(gesture) >= 2:  # Majority threshold
+        return gesture  # Confirmed
 ```
 
 **Effect:**
 - Eliminates single-frame noise
-- Requires ~100ms (3 frames @ 30 FPS) to confirm gesture
-- Trade-off: +100ms latency for +90% confidence
+- Requires ~66ms (2 frames @ 30 FPS) to confirm gesture
+- Trade-off: +66ms latency for +90% confidence
 
-### Command Debouncing
-**Purpose:** Prevent double-execution of same command
+### Single-Fire Command Mode
+**Purpose:** Send key press only when gesture CHANGES, not while held
 
 **Implementation:**
 ```python
-if (current_time - last_command_time) > 0.3_seconds:
+# Only fire when gesture changes (single-fire mode)
+if gesture == last_executed_gesture:
+    return  # Skip — already sent for this gesture
+
+# Cooldown check
+if (current_time - last_command_time) > 0.2_seconds:
     execute_keyboard_command()
     last_command_time = current_time
-else:
-    # Skip (still in cooldown)
-    pass
+    last_executed_gesture = gesture
+
+# CLOSED_FIST resets the tracker (neutral position)
+if gesture == CLOSED_FIST:
+    last_executed_gesture = None
 ```
 
 **Effect:**
-- Prevents rapid-fire key presses
-- 0.3s = ~9 FPS minimum command rate
-- Matches natural human gesture speed
+- One gesture = one key press (matches Subway Surfers swipe mechanics)
+- CLOSED_FIST acts as reset — return to fist between gestures
+- 0.2s cooldown prevents accidental double-presses
 
 ### Logging & Event Tracking
 **What Gets Logged:**
@@ -556,9 +575,9 @@ python tests/test_module_1.py
 - ✅ MediaPipe hand detection initialization
 - ✅ Hand landmark extraction and validation
 - ✅ Finger counting algorithm (0-5 fingers)
-- ✅ Gesture classification (4 gestures)
-- ✅ Temporal smoothing (5-frame buffer)
-- ✅ Command debouncing (0.3s cooldown)
+- ✅ Gesture classification (5 gestures)
+- ✅ Temporal smoothing (2-of-3 majority vote)
+- ✅ Single-fire command mode (0.2s cooldown)
 - ✅ Keyboard command mapping
 - ✅ Logging system initialization
 - ✅ Frame processing pipeline
@@ -592,14 +611,15 @@ python tests/test_module_1.py
 - [ ] Gesture names display correctly on screen
 - [ ] Finger count visualization accurate
 - [ ] Base gestures all work:
-  - [ ] OPEN_PALM (spread 5 fingers)
-  - [ ] CLOSED_FIST (make fist)
-  - [ ] INDEX_RIGHT (point right)
-  - [ ] INDEX_LEFT (point left)
+  - [ ] CLOSED_FIST (make fist → neutral, no key)
+  - [ ] OPEN_PALM (spread fingers → UP key)
+  - [ ] THUMBS_UP (raise thumb → DOWN key)
+  - [ ] INDEX_RIGHT (point right → RIGHT key)
+  - [ ] INDEX_LEFT (point left → LEFT key)
 - [ ] Keyboard commands send (test with Notepad):
-  - [ ] UP arrow key
-  - [ ] DOWN arrow key
-  - [ ] LEFT/RIGHT arrow keys
+  - [ ] UP arrow key (open palm)
+  - [ ] DOWN arrow key (thumbs up)
+  - [ ] LEFT/RIGHT arrow keys (index finger pointing)
 - [ ] Statistics print correctly (press 's')
 - [ ] Logs created and contain events
 - [ ] Program quits cleanly (press 'q')
@@ -663,22 +683,21 @@ Internal documentation:
 
 **Example:**
 ```python
-def count_fingers(self, landmarks_pos: np.ndarray) -> int:
+def count_fingers(self, landmarks_pos: np.ndarray) -> tuple:
     """
-    Count raised fingers by comparing tip vs DIP positions.
+    Count raised fingers using landmark positions.
     
     Args:
         landmarks_pos: 21x2 array of hand landmark coordinates
         
     Returns:
-        Integer count of raised fingers (0-5)
+        tuple: (raised_count, detailed_measurements)
         
     Time Complexity: O(5) = O(1) constant time
     
     Algorithm:
-        For each of 5 fingers, compare tip Y-position to DIP Y-position.
-        If tip is significantly above DIP (>5px margin), finger is raised.
-        Return count of raised fingers.
+        Thumb: distance-based (thumb tip to index MCP vs palm size).
+        Other fingers: Y-coordinate comparison (tip vs DIP, 10px margin).
     """
     # Implementation...
 ```
@@ -696,8 +715,9 @@ python src/main_mediapipe.py
 # 2. In a web browser, open Poki.com
 # 3. Search and play "Temple Run" or "Subway Surfers"
 # 4. Make hand gestures to control the game:
-#    - Spread hand: JUMP
-#    - Close fist: SLIDE  
+#    - Close fist: NEUTRAL (resting position, no key)
+#    - Spread hand: JUMP (UP key)
+#    - Thumbs up: SLIDE (DOWN key)
 #    - Point right: MOVE RIGHT
 #    - Point left: MOVE LEFT
 
@@ -757,27 +777,30 @@ python src/main_mediapipe.py
 
 # 2. Test each gesture individually:
 
-# Test OPEN_PALM
+# Test CLOSED_FIST (Neutral)
+#   - Make tight fist with all fingers closed
+#   - Watch display show: "CLOSED_FIST" with "NEUTRAL (no key)"
+#   - No keyboard command sent (resting position)
+
+# Test OPEN_PALM (Jump)
 #   - Spread all 5 fingers wide
-#   - Watch display show: "OPEN_PALM (5 fingers raised)"
-#   - Watch logs show: "[COMMAND] OPEN_PALM → UP key"
-#   - Compare with game: character jumps
+#   - Watch display show: "OPEN_PALM" with "UP KEY (JUMP)"
+#   - Watch logs show: "[COMMAND] OPEN_PALM → UP key (jump)"
 
-# Test CLOSED_FIST
-#   - Make tight fist with all fingers
-#   - Watch display show: "CLOSED_FIST (0 fingers raised)"
-#   - Watch logs show: "[COMMAND] CLOSED_FIST → DOWN key"
-#   - Compare with game: character slides
+# Test THUMBS_UP (Slide)
+#   - Raise only your thumb, close other fingers
+#   - Watch display show: "THUMBS_UP" with "DOWN KEY (SLIDE)"
+#   - Watch logs show: "[COMMAND] THUMBS_UP → DOWN key (slide)"
 
-# Test INDEX_RIGHT
-#   - Extend right index in right half of frame
-#   - Watch display show: "INDEX_RIGHT (1 finger raised, right position)"
-#   - Watch logs: "[COMMAND] INDEX_RIGHT → RIGHT key"
+# Test INDEX_RIGHT (Move Right)
+#   - Point index finger to the right
+#   - Watch display show: "INDEX_RIGHT" with "RIGHT KEY"
+#   - Watch logs: "[COMMAND] INDEX_RIGHT → RIGHT key (move_right)"
 
-# Test INDEX_LEFT
-#   - Extend left index in left half of frame
-#   - Watch display show: "INDEX_LEFT (1 finger raised, left position)"
-#   - Watch logs: "[COMMAND] INDEX_LEFT → LEFT key"
+# Test INDEX_LEFT (Move Left)
+#   - Point index finger to the left
+#   - Watch display show: "INDEX_LEFT" with "LEFT KEY"
+#   - Watch logs: "[COMMAND] INDEX_LEFT → LEFT key (move_left)"
 
 # 3. Check logs file for complete event record
 #    ls logs/gesture_recognition_*.log
@@ -906,25 +929,22 @@ pip show mediapipe  # Must show 0.10.5
 **Cause:** Hand position, finger extension, or gesture ambiguity
 
 **Solutions:**
-1. **Fully extend fingers for OPEN_PALM:**
+1. **Fully extend fingers for OPEN_PALM (Jump):**
    - Spread all 5 fingers as wide as possible
-   - Make sure not touching
-   - Thumb should be separated from other fingers
+   - At least 3 non-thumb fingers must be raised
    
-2. **Fully close fingers for CLOSED_FIST:**
-   - Make tight fist with all fingers closed
-   - Ensure no fingers slightly extended
+2. **Fully close fingers for CLOSED_FIST (Neutral):**
+   - Make tight fist with all fingers closed including thumb
+   - This is the resting position (no key pressed)
    
-3. **Clear pointing for INDEX_RIGHT/LEFT:**
-   - Extend right index finger only
-   - Keep other fingers closed
-   - Point clearly toward right/left side of frame
+3. **Only raise thumb for THUMBS_UP (Slide):**
+   - Raise your thumb while keeping all other fingers closed
+   - Thumb must be clearly extended away from the palm
    
-4. **Adjust finger detection sensitivity:**
-   - Open `src/main_mediapipe.py`
-   - Find line with `- 5` in count_fingers() method
-   - Change to `- 3` for more sensitive (detects partially raised)
-   - Or change to `- 7` for less sensitive (requires fully raised)
+4. **Clear pointing for INDEX_RIGHT/LEFT:**
+   - Point your index finger clearly to the left or right
+   - Direction is based on index fingertip vs knuckle position
+   - Keep other non-thumb fingers closed
 
 ---
 
@@ -1128,7 +1148,7 @@ python src/main_mediapipe.py 2>&1 > output.txt
 ## 🚀 Future Enhancements
 
 ### Short Term (1-2 weeks)
-- Additional gesture types (pinch, thumbs-up)
+- Additional gesture types (pinch, peace sign)
 - Gesture velocity detection (slow vs. fast)
 - Confidence-based filtering
 - Visual feedback improvements
@@ -1194,7 +1214,7 @@ For issues, questions, or suggestions:
 **Ready to recognize some hand gestures?** 🖐️
 
 ```bash
-python src/main.py
+python src/main_mediapipe.py
 ```
 
 Enjoy!
